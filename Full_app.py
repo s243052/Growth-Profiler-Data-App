@@ -11,8 +11,8 @@ from scipy.signal import savgol_filter
 # ============================================================
 # 1. PAGE CONFIG & SESSION STATE
 # ============================================================
-st.set_page_config(page_title="Pro OD Lab Analyzer", layout="wide")
-st.title("🧪 Pro OD Experiment Manager")
+st.set_page_config(page_title="Growth Profiler Analysis", layout="wide")
+st.title("🧪 High-Throughput Microbial Analyzer ")
 
 STRAIN_NAMES = {1: "MUCL 28849", 2: "MUCL 29853", 3: "MUCL 29989", 4: "Y-01481", 
                 5: "Y-00587", 6: "Y-7784", 7: "Y-00879", 8: "W29", 9: "Y-1095", 10: "Y-01087"}
