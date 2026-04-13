@@ -11,8 +11,10 @@ from scipy.signal import savgol_filter
 # ============================================================
 # 1. PAGE CONFIG & SESSION STATE
 # ============================================================
-st.set_page_config(page_title="Growth Profiler Analysis", layout="wide")
-st.title("🧪 High-Throughput Microbial Analyzer ")
+APP_TITLE = "High-Throughput Growth Profiler"
+
+st.set_page_config(page_title=APP_TITLE, layout="wide")
+st.title(f"🔬 {APP_TITLE}")
 
 STRAIN_NAMES = {1: "MUCL 28849", 2: "MUCL 29853", 3: "MUCL 29989", 4: "Y-01481", 
                 5: "Y-00587", 6: "Y-7784", 7: "Y-00879", 8: "W29", 9: "Y-1095", 10: "Y-01087"}
@@ -24,43 +26,27 @@ if 'step' not in st.session_state:
     st.session_state.step = 0
 
 # ============================================================
-# PERSISTENCE HELPERS (Save/Load to Disk)
+# PERSISTENCE HELPERS
 # ============================================================
 def save_session():
-    # Bundles the dictionary into a binary format
-    return pickle.dumps({
-        "datasets": st.session_state.datasets,
-        "step": st.session_state.step
-    })
+    return pickle.dumps({"datasets": st.session_state.datasets, "step": st.session_state.step})
 
 def load_session(uploaded_file):
     try:
         data = pickle.load(uploaded_file)
         st.session_state.datasets = data["datasets"]
         st.session_state.step = data["step"]
-        st.success("Session loaded successfully!")
+        st.success("Session loaded!")
         st.rerun()
     except Exception as e:
-        st.error(f"Failed to load session: {e}")
+        st.error(f"Load failed: {e}")
 
-# Sidebar Persistence Controls
 with st.sidebar:
-    st.header("💾 Save/Load Session")
-    # Download current state
+    st.header("💾 Session Manager")
     if st.session_state.datasets:
-        st.download_button(
-            label="📥 Download Session File",
-            data=save_session(),
-            file_name="od_analyzer_session.pkl",
-            mime="application/octet-stream",
-            help="Save all datasets and maps to your computer."
-        )
-    
-    # Upload previous state
-    uploaded_session = st.file_uploader("📤 Load Session File", type=["pkl"])
-    if uploaded_session is not None:
-        if st.button("🔄 Restore Session"):
-            load_session(uploaded_session)
+        st.download_button("📥 Download Session", save_session(), "growth_session.pkl", "application/octet-stream")
+    up_session = st.file_uploader("📤 Load Session", type=["pkl"])
+    if up_session and st.button("🔄 Restore"): load_session(up_session)
 
 # ============================================================
 # HELPER: ROBUST CSV LOADER
@@ -68,25 +54,16 @@ with st.sidebar:
 def load_od_csv(uploaded_file):
     uploaded_file.seek(0)
     try:
-        raw = uploaded_file.read()
-        uploaded_file.seek(0)
-        text = raw.decode("utf-8", errors="ignore")
-        lines = text.splitlines()
-
-        start_line = None
+        raw = uploaded_file.read().decode("utf-8", errors="ignore")
+        lines = raw.splitlines()
+        start_idx = None
         for i, line in enumerate(lines):
-            line_clean = line.strip().replace('"', '')
-            if any(h in line_clean for h in ["Time(min)", "Time (min)", "Time [min]"]) or line_clean.startswith("Time"):
-                start_line = i
+            if any(h in line for h in ["Time(min)", "Time (min)", "Time [min]"]):
+                start_idx = i
                 break
-
-        if start_line is None: return None
-
-        csv_text = "\n".join(lines[start_line:])
-        df = pd.read_csv(io.StringIO(csv_text))
-        if df.shape[1] == 1:
-            df = pd.read_csv(io.StringIO(csv_text), sep=';')
-
+        if start_idx is None: return None
+        data_body = "\n".join(lines[start_idx:])
+        df = pd.read_csv(io.StringIO(data_body), sep=None, engine='python', on_bad_lines='skip')
         df = df.dropna(how='all', axis=0).dropna(how='all', axis=1)
         return df if df.shape[1] >= 2 else None
     except Exception as e:
@@ -94,16 +71,19 @@ def load_od_csv(uploaded_file):
         return None
 
 # ============================================================
-# STEP 0: DATASET MANAGER
+# STEP 0: DATASET MANAGER (RESTORED DELETE)
 # ============================================================
 if st.session_state.step == 0:
     st.header("Step 0: Manage Experiment Groups")
     
     if st.session_state.datasets:
         st.subheader("Current Datasets:")
-        for name, info in st.session_state.datasets.items():
-            num_f = len(info.get("data", {}))
-            st.write(f"✅ **{name}** ({num_f} plates loaded)")
+        for name in list(st.session_state.datasets.keys()):
+            col_a, col_b = st.columns([4, 1])
+            col_a.write(f"✅ **{name}** ({len(st.session_state.datasets[name].get('data', {}))} plates)")
+            if col_b.button("🗑️ Remove", key=f"del_{name}"):
+                del st.session_state.datasets[name]
+                st.rerun()
         st.divider()
 
     st.subheader("Add New Dataset")
@@ -117,12 +97,7 @@ if st.session_state.step == 0:
             
     if st.session_state.datasets:
         if col2.button("Next: Upload Files ➡️"):
-            st.session_state.step = 1
-            st.rerun()
-            
-    if st.button("🗑️ Reset Everything", type="secondary"):
-        st.session_state.clear()
-        st.rerun()
+            st.session_state.step = 1; st.rerun()
 
 # ============================================================
 # STEP 1: UPLOAD
@@ -136,23 +111,15 @@ elif st.session_state.step == 1:
                 for f in ups:
                     if f.name not in st.session_state.datasets[name]["data"]:
                         df = load_od_csv(f)
-                        if df is not None:
-                            st.session_state.datasets[name]["data"][f.name] = df
+                        if df is not None: st.session_state.datasets[name]["data"][f.name] = df
             if st.session_state.datasets[name]["data"]:
-                st.write("**Currently Loaded:**")
-                for fn in st.session_state.datasets[name]["data"].keys():
-                    st.write(f"📄 {fn}")
+                for fn in st.session_state.datasets[name]["data"].keys(): st.write(f"📄 {fn}")
 
     col1, col2 = st.columns(2)
-    if col1.button("⬅️ Back"):
-        st.session_state.step = 0
-        st.rerun()
+    if col1.button("⬅️ Back"): st.session_state.step = 0; st.rerun()
     if col2.button("Next: Plate Maps ➡️"):
         if any(len(d["data"]) > 0 for d in st.session_state.datasets.values()):
-            st.session_state.step = 2
-            st.rerun()
-        else:
-            st.error("Upload at least one file.")
+            st.session_state.step = 2; st.rerun()
 
 # ============================================================
 # STEP 2: PLATE MAPS
@@ -164,9 +131,11 @@ elif st.session_state.step == 2:
     Please paste the well labels in order (starting from A1, A2...). The software expects the format: 
     **Mx_Yx_Rx** where **M** is Media ID, **Y** is Strain ID, and **R** is Replicate.
     
+    * **Bad Wells:** If a well is contaminated or messed up, type **MISSING** in its place to omit it.
+    
     **Example Format:**
     ```text
-    M1_Y1_R1  M1_Y1_R2  M1_Y1_R3  M1_Y2_R1
+    M1_Y1_R1  M1_Y1_R2  M1_Y1_R3  MISSING
     M1_Y2_R2  M1_Y2_R3  M2_Y1_R1  M2_Y1_R2
     ```
     """)
@@ -174,87 +143,99 @@ elif st.session_state.step == 2:
     for ds_name, ds_info in st.session_state.datasets.items():
         with st.expander(f"🗺️ Maps for {ds_name}", expanded=True):
             saved_filenames = sorted(list(ds_info["data"].keys()))
-            if not saved_filenames:
-                st.warning(f"No files for '{ds_name}'.")
-            else:
-                for idx, fname in enumerate(saved_filenames):
-                    m_val = st.text_area(f"Plate {idx+1} Layout (File: {fname})", 
-                                         value=ds_info["maps"].get(fname, ""),
-                                         key=f"txt_{ds_name}_{fname}", height=120)
-                    st.session_state.datasets[ds_name]["maps"][fname] = m_val
+            for idx, fname in enumerate(saved_filenames):
+                m_val = st.text_area(f"Plate {idx+1} Layout ({fname})", 
+                                     value=ds_info["maps"].get(fname, ""), key=f"txt_{ds_name}_{fname}", height=120)
+                st.session_state.datasets[ds_name]["maps"][fname] = m_val
 
     col1, col2 = st.columns(2)
-    if col1.button("⬅️ Back to Uploads"):
-        st.session_state.step = 1
-        st.rerun()
-    if col2.button("Next: View Results ➡️"):
-        st.session_state.step = 3
-        st.rerun()
+    if col1.button("⬅️ Back"): st.session_state.step = 1; st.rerun()
+    if col2.button("Next: View Results ➡️"): st.session_state.step = 3; st.rerun()
 
 # ============================================================
-# STEP 3: RESULTS
+# STEP 3: RESULTS (AXIS LABELS + ALL FILTERS RESTORED)
 # ============================================================
 elif st.session_state.step == 3:
-    st.header("Step 3: Results & Filtering")
-    grouped_curves = {} 
-    time_points = {}
+    st.header("Step 3: Kinetic Analysis & Filtering")
+    grouped_curves = {}; time_points = {}
 
     for ds_name, ds_info in st.session_state.datasets.items():
         for fname, df in ds_info["data"].items():
             t = pd.to_numeric(df.iloc[:, 0], errors='coerce').values / 60
             time_points[ds_name] = t
             well_vals = df.iloc[:, 1:].apply(pd.to_numeric, errors='coerce').values
-            p_map = ds_info["maps"].get(fname, "")
-            labels = [l.strip().upper() for l in p_map.split() if l.strip()]
+            labels = [l.strip().upper() for l in ds_info["maps"].get(fname, "").split() if l.strip()]
+            
             for idx, label in enumerate(labels):
+                if "MISSING" in label: continue
                 match = LABEL_PATTERN.search(label)
                 if match and idx < well_vals.shape[1]:
                     mid, sid, rep = map(int, match.groups())
-                    curve = np.where(well_vals[:, idx] < 0, np.nan, well_vals[:, idx])
-                    grouped_curves.setdefault((ds_name, sid, mid), []).append(curve)
+                    curve = well_vals[:, idx]
+                    if not np.all(np.isnan(curve)):
+                        grouped_curves.setdefault((ds_name, sid, mid), []).append(np.where(curve < 0, np.nan, curve))
 
     with st.sidebar:
         st.subheader("🧪 Media Dictionary")
         for ds_name in st.session_state.datasets.keys():
-            with st.expander(f"Media for {ds_name}"):
+            with st.expander(f"Media Names for {ds_name}"):
                 m_ids = sorted(list(set(k[2] for k in grouped_curves.keys() if k[0] == ds_name)))
                 for mid in m_ids:
                     st.session_state.datasets[ds_name]["media"][mid] = st.text_input(
-                        f"M{mid}", value=st.session_state.datasets[ds_name]["media"].get(mid, f"Media {mid}"),
-                        key=f"med_{ds_name}_{mid}")
+                        f"M{mid} Name", value=st.session_state.datasets[ds_name]["media"].get(mid, f"Media {mid}"),
+                        key=f"m_in_{ds_name}_{mid}")
         
         st.divider()
-        st.subheader("🔍 Filters")
+        st.subheader("🔍 Filter View")
         all_strains = sorted(list(set(STRAIN_NAMES.get(k[1], f"Y{k[1]}") for k in grouped_curves.keys())))
-        sel_strains = st.multiselect("Select Strains", all_strains, default=all_strains)
-        sel_ds = st.multiselect("Select Data Sets", list(st.session_state.datasets.keys()), default=list(st.session_state.datasets.keys()))
-        smooth = st.checkbox("Smooth Curves", True); win = st.slider("Window", 5, 31, 11, 2); show_sd = st.checkbox("Show SD", True)
+        sel_strains = st.multiselect("Strains", all_strains, default=all_strains)
+        
+        all_media_labels = sorted(list(set(st.session_state.datasets[k[0]]["media"].get(k[2], f"Media {k[2]}") for k in grouped_curves.keys())))
+        sel_media = st.multiselect("Media Types", all_media_labels, default=all_media_labels)
+        
+        sel_ds = st.multiselect("Datasets", list(st.session_state.datasets.keys()), default=list(st.session_state.datasets.keys()))
+        
+        smooth = st.checkbox("Apply Smoothing", True); win = st.slider("Smoothing Window", 5, 31, 11, 2)
+        show_sd = st.checkbox("Show Standard Deviation", True)
 
     fig_curves = go.Figure(); final_stats = []; colors = px.colors.qualitative.Plotly + px.colors.qualitative.Safe; color_idx = 0
 
     for (ds_name, sid, mid), reps_list in grouped_curves.items():
         s_name = STRAIN_NAMES.get(sid, f"Y{sid}")
         m_name = st.session_state.datasets[ds_name]["media"].get(mid, f"Media {mid}")
-        if s_name in sel_strains and ds_name in sel_ds:
-            min_l = min(len(r) for r in reps_list); arr = np.array([r[:min_l] for r in reps_list], dtype=np.float64)
-            y_mean = np.nanmean(arr, axis=0); y_sd = np.nanstd(arr, axis=0); x = time_points[ds_name][:min_l]
-            plot_y = savgol_filter(y_mean, win, 2) if (smooth and len(y_mean) > win) else y_mean
+        
+        if s_name in sel_strains and m_name in sel_media and ds_name in sel_ds:
+            min_l = min(len(r) for r in reps_list); x = time_points[ds_name][:min_l]
+            arr = np.array([r[:min_l] for r in reps_list])
+            y_mean = np.nanmean(arr, axis=0); y_sd = np.nanstd(arr, axis=0)
+            
+            y_clean = pd.Series(y_mean).interpolate().bfill().ffill().values if np.isnan(y_mean).any() else y_mean
+            plot_y = savgol_filter(y_clean, win, 2) if (smooth and len(y_clean) > win) else y_clean
+            
             color = colors[color_idx % len(colors)]; leg = f"{ds_name} | {s_name} | {m_name}"
+
             if show_sd:
                 rgba = f"rgba{tuple(list(int(color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4)) + [0.15])}" if color.startswith('#') else color.replace("rgb", "rgba").replace(")", ", 0.15)")
                 fig_curves.add_trace(go.Scatter(x=np.concatenate([x, x[::-1]]), y=np.concatenate([plot_y+y_sd, (plot_y-y_sd)[::-1]]), fill='toself', fillcolor=rgba, line=dict(color='rgba(0,0,0,0)'), showlegend=False))
+            
             fig_curves.add_trace(go.Scatter(x=x, y=plot_y, name=leg, line=dict(width=3, color=color)))
-            mu = 0; mask = (y_mean > 0.01) & (~np.isnan(y_mean))
+            
+            # Kinetic μmax calculation
+            mu = 0; mask = (y_clean > 0.01) & (~np.isnan(y_clean))
             if np.sum(mask) > 5:
                 try:
-                    slp = [np.polyfit(x[mask][i:i+5], np.log(y_mean[mask][i:i+5]), 1)[0] for i in range(len(y_mean[mask])-5)]
+                    slp = [np.polyfit(x[mask][i:i+5], np.log(y_clean[mask][i:i+5]), 1)[0] for i in range(len(y_clean[mask])-5)]
                     mu = round(max(slp), 3) if slp else 0
                 except: mu = 0
             final_stats.append({"Legend": leg, "Mu": mu, "Color": color}); color_idx += 1
 
+    # --- SET AXIS TITLES HERE ---
+    fig_curves.update_layout(xaxis_title="Time (h)", yaxis_title="OD600", legend_title="Experiment Groups")
+
     if final_stats:
+        st.subheader("📈 Growth Kinetics Visualization")
         st.plotly_chart(fig_curves, use_container_width=True)
-        st.plotly_chart(px.bar(pd.DataFrame(final_stats), x="Legend", y="Mu", color="Legend", color_discrete_map={s['Legend']: s['Color'] for s in final_stats}, text="Mu"), use_container_width=True)
+        st.subheader("🚀 Calculated Maximum Growth Rates (μmax)")
+        st.plotly_chart(px.bar(pd.DataFrame(final_stats), x="Legend", y="Mu", color="Legend", color_discrete_map={s['Legend']: s['Color'] for s in final_stats}, text="Mu", labels={"Mu": "μmax (h⁻¹)", "Legend": "Group"}), use_container_width=True)
     
-    if st.button("⬅️ Add/Edit Datasets"):
-        st.session_state.step = 0; st.rerun()
+    if st.button("⬅️ Back to Data Entry"): st.session_state.step = 0; st.rerun()
